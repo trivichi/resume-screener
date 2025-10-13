@@ -5,6 +5,8 @@ from typing import List
 import os
 import shutil
 from datetime import datetime
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 from database import init_db, get_db, Resume
 from resume_parser import extract_text_from_pdf, parse_resume_with_llm
@@ -27,6 +29,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Initialize database
 init_db()
+
+# Thread pool for parallel processing
+executor = ThreadPoolExecutor(max_workers=5)
 
 @app.get("/")
 def root():
@@ -100,18 +105,15 @@ async def batch_upload(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
 ):
-    """Upload and parse multiple resumes"""
+    """Upload and parse multiple resumes with parallel processing"""
     
-    results = []
-    
-    for file in files:
+    async def process_single_file(file):
         if not file.filename.endswith('.pdf'):
-            results.append({
+            return {
                 "filename": file.filename,
                 "status": "error",
                 "message": "Only PDF files supported"
-            })
-            continue
+            }
         
         file_path = os.path.join(UPLOAD_DIR, file.filename)
         
@@ -120,9 +122,10 @@ async def batch_upload(
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
-            # Extract and parse
-            resume_text = extract_text_from_pdf(file_path)
-            parsed_data = parse_resume_with_llm(resume_text)
+            # Extract and parse (in thread pool)
+            loop = asyncio.get_event_loop()
+            resume_text = await loop.run_in_executor(executor, extract_text_from_pdf, file_path)
+            parsed_data = await loop.run_in_executor(executor, parse_resume_with_llm, resume_text)
             
             # Store in database
             resume_entry = Resume(
@@ -140,22 +143,25 @@ async def batch_upload(
             db.commit()
             db.refresh(resume_entry)
             
-            results.append({
+            return {
                 "filename": file.filename,
                 "status": "success",
                 "resume_id": resume_entry.id,
                 "parsed_data": parsed_data
-            })
+            }
             
         except Exception as e:
-            results.append({
+            return {
                 "filename": file.filename,
                 "status": "error",
                 "message": str(e)
-            })
+            }
         finally:
             if os.path.exists(file_path):
                 os.remove(file_path)
+    
+    # Process all files in parallel
+    results = await asyncio.gather(*[process_single_file(file) for file in files])
     
     return {
         "total_files": len(files),
@@ -170,22 +176,18 @@ async def match_resumes(
     resume_ids: str = Form(None),
     db: Session = Depends(get_db)
 ):
-    """Match resumes with job description"""
+    """Match resumes with job description using parallel processing"""
     
     if resume_ids:
-        # Match specific resumes
         ids = [int(id.strip()) for id in resume_ids.split(',')]
         resumes = db.query(Resume).filter(Resume.id.in_(ids)).all()
     else:
-        # Match all resumes
         resumes = db.query(Resume).all()
     
     if not resumes:
         raise HTTPException(status_code=404, detail="No resumes found")
     
-    results = []
-    
-    for resume in resumes:
+    async def process_single_resume(resume):
         # Prepare resume data
         resume_data = {
             'name': resume.candidate_name,
@@ -195,8 +197,14 @@ async def match_resumes(
             'education': resume.education
         }
         
-        # Get match analysis
-        match_result = match_resume_with_job(resume_data, job_description)
+        # Get match analysis (in thread pool for parallel execution)
+        loop = asyncio.get_event_loop()
+        match_result = await loop.run_in_executor(
+            executor, 
+            match_resume_with_job, 
+            resume_data, 
+            job_description
+        )
         
         # Update database
         resume.match_score = match_result['overall_score']
@@ -206,7 +214,7 @@ async def match_resumes(
         resume.justification = match_result['justification']
         resume.job_description = job_description
         
-        results.append({
+        return {
             "resume_id": resume.id,
             "candidate_name": resume.candidate_name,
             "email": resume.email,
@@ -219,7 +227,10 @@ async def match_resumes(
             "gaps": match_result['gaps'],
             "justification": match_result['justification'],
             "recommendation": match_result['recommendation']
-        })
+        }
+    
+    # Process all resumes in parallel (up to 5 at a time)
+    results = await asyncio.gather(*[process_single_resume(resume) for resume in resumes])
     
     db.commit()
     
