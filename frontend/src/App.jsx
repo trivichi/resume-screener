@@ -10,7 +10,7 @@ import './App.css';
 function App() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [stage, setStage] = useState('hero'); // hero, upload, results
+  const [stage, setStage] = useState('hero');
   const [error, setError] = useState(null);
 
   const handleStartScreening = () => {
