@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
-import { Trophy, TrendingUp, AlertCircle, CheckCircle2, XCircle, Download, Home, ChevronDown, ChevronUp } from 'lucide-react';
+import { Trophy, TrendingUp, AlertCircle, CheckCircle2, XCircle, Download, Home, ChevronDown, ChevronUp, Trash2, X } from 'lucide-react';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 export default function ResultsDashboard({ results, onReset }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [sortBy, setSortBy] = useState('overall_score');
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [candidates, setCandidates] = useState(results.shortlisted_candidates);
 
-  const sortedCandidates = [...results.shortlisted_candidates].sort((a, b) => {
+  const sortedCandidates = [...candidates].sort((a, b) => {
     return b[sortBy] - a[sortBy];
   });
 
@@ -32,25 +37,47 @@ export default function ResultsDashboard({ results, onReset }) {
     return <Icon className="w-5 h-5" />;
   };
 
-  const exportResults = async () => {
-    const { jsPDF } = await import('jspdf');
-    await import('jspdf-autotable');
-    
+  const deleteCandidate = async (resumeId) => {
+    setDeletingId(resumeId);
+    try {
+      const response = await fetch(`http://localhost:8000/resumes/${resumeId}`, {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        // Remove from local state
+        setCandidates(candidates.filter(c => c.resume_id !== resumeId));
+        
+        // Show success message
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+        toast.textContent = '✓ Resume deleted successfully';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+      } else {
+        throw new Error('Failed to delete');
+      }
+    } catch (error) {
+      console.error('Error deleting resume:', error);
+      alert('Error deleting resume. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const exportResults = () => {
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     
-    // Title
     doc.setFontSize(20);
     doc.setTextColor(139, 92, 246);
     doc.text('Resume Screening Results', pageWidth / 2, 20, { align: 'center' });
     
-    // Summary Stats
     doc.setFontSize(10);
     doc.setTextColor(0, 0, 0);
-    doc.text(`Total Candidates: ${results.total_candidates}`, 20, 35);
+    doc.text(`Total Candidates: ${candidates.length}`, 20, 35);
     doc.text(`Date: ${new Date().toLocaleDateString()}`, 20, 40);
     
-    // Job Description
     doc.setFontSize(12);
     doc.setTextColor(139, 92, 246);
     doc.text('Job Description:', 20, 50);
@@ -61,14 +88,12 @@ export default function ResultsDashboard({ results, onReset }) {
     
     let yPos = 56 + (splitJobDesc.length * 4) + 10;
     
-    // Candidates Table
     sortedCandidates.forEach((candidate, index) => {
       if (yPos > 250) {
         doc.addPage();
         yPos = 20;
       }
       
-      // Candidate Header
       doc.setFillColor(139, 92, 246);
       doc.rect(20, yPos, pageWidth - 40, 8, 'F');
       doc.setTextColor(255, 255, 255);
@@ -77,7 +102,6 @@ export default function ResultsDashboard({ results, onReset }) {
       
       yPos += 12;
       
-      // Scores
       doc.autoTable({
         startY: yPos,
         head: [['Metric', 'Score']],
@@ -95,13 +119,12 @@ export default function ResultsDashboard({ results, onReset }) {
       
       yPos = doc.lastAutoTable.finalY + 5;
       
-      // Strengths
       doc.setFontSize(10);
       doc.setTextColor(34, 197, 94);
       doc.text('✓ Strengths:', 20, yPos);
       doc.setFontSize(9);
       doc.setTextColor(80, 80, 80);
-      candidate.strengths.forEach((strength, i) => {
+      candidate.strengths.forEach((strength) => {
         yPos += 5;
         const wrapped = doc.splitTextToSize(`• ${strength}`, pageWidth - 45);
         doc.text(wrapped, 25, yPos);
@@ -110,13 +133,12 @@ export default function ResultsDashboard({ results, onReset }) {
       
       yPos += 5;
       
-      // Gaps
       doc.setFontSize(10);
       doc.setTextColor(249, 115, 22);
       doc.text('⚠ Areas for Improvement:', 20, yPos);
       doc.setFontSize(9);
       doc.setTextColor(80, 80, 80);
-      candidate.gaps.forEach((gap, i) => {
+      candidate.gaps.forEach((gap) => {
         yPos += 5;
         const wrapped = doc.splitTextToSize(`• ${gap}`, pageWidth - 45);
         doc.text(wrapped, 25, yPos);
@@ -125,7 +147,6 @@ export default function ResultsDashboard({ results, onReset }) {
       
       yPos += 5;
       
-      // Justification
       doc.setFontSize(10);
       doc.setTextColor(139, 92, 246);
       doc.text('AI Analysis:', 20, yPos);
@@ -138,8 +159,26 @@ export default function ResultsDashboard({ results, onReset }) {
       yPos += (wrappedJustification.length * 4) + 10;
     });
     
-    // Save PDF
     doc.save(`resume-screening-${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  const clearAllData = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/resumes', {
+        method: 'DELETE',
+      });
+      
+      if (response.ok) {
+        alert('All data cleared successfully!');
+        onReset();
+      } else {
+        throw new Error('Failed to clear data');
+      }
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      alert('Error clearing data. Please try again.');
+    }
+    setShowClearModal(false);
   };
 
   return (
@@ -165,27 +204,39 @@ export default function ResultsDashboard({ results, onReset }) {
                 <h1 className="text-4xl font-bold text-white">Screening Results</h1>
               </div>
               <p className="text-white/60">
-                Analyzed {results.total_candidates} candidate{results.total_candidates !== 1 ? 's' : ''}
+                Analyzed {candidates.length} candidate{candidates.length !== 1 ? 's' : ''}
               </p>
             </div>
           </div>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={exportResults}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold shadow-lg hover:shadow-purple-500/50 transition-all"
-          >
-            <Download className="w-5 h-5" />
-            Export Results
-          </motion.button>
+          <div className="flex gap-3">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowClearModal(true)}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-red-500/20 border border-red-500/30 text-red-400 font-semibold hover:bg-red-500/30 transition-all"
+            >
+              <Trash2 className="w-5 h-5" />
+              Clear All Data
+            </motion.button>
+
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={exportResults}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold shadow-lg hover:shadow-purple-500/50 transition-all"
+            >
+              <Download className="w-5 h-5" />
+              Export PDF
+            </motion.button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
           {[
             { 
               label: 'Total Candidates', 
-              value: results.total_candidates,
+              value: candidates.length,
               icon: Trophy,
               color: 'from-purple-500 to-pink-500'
             },
@@ -203,7 +254,7 @@ export default function ResultsDashboard({ results, onReset }) {
             },
             { 
               label: 'Avg Score', 
-              value: (sortedCandidates.reduce((acc, c) => acc + c.overall_score, 0) / sortedCandidates.length).toFixed(1),
+              value: candidates.length > 0 ? (sortedCandidates.reduce((acc, c) => acc + c.overall_score, 0) / sortedCandidates.length).toFixed(1) : '0',
               icon: AlertCircle,
               color: 'from-yellow-500 to-orange-500'
             },
@@ -249,6 +300,7 @@ export default function ResultsDashboard({ results, onReset }) {
               key={candidate.resume_id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: -100 }}
               transition={{ delay: index * 0.05 }}
               layout
               className="relative"
@@ -264,12 +316,10 @@ export default function ResultsDashboard({ results, onReset }) {
               )}
 
               <motion.div
-                whileHover={{ scale: 1.01 }}
-                className="p-8 rounded-3xl bg-white/5 backdrop-blur-xl border border-white/10 hover:bg-white/10 transition-all cursor-pointer"
-                onClick={() => setExpandedCard(expandedCard === index ? null : index)}
+                className="p-8 rounded-3xl bg-white/5 backdrop-blur-xl border border-white/10 hover:bg-white/10 transition-all group"
               >
                 <div className="flex items-start justify-between mb-6">
-                  <div className="flex-1">
+                  <div className="flex-1" onClick={() => setExpandedCard(expandedCard === index ? null : index)}>
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-2xl font-bold text-white">{candidate.candidate_name}</h3>
                       <div className={`px-3 py-1 rounded-full bg-gradient-to-r ${getRecommendationColor(candidate.recommendation)} text-white text-sm font-semibold flex items-center gap-2`}>
@@ -281,15 +331,33 @@ export default function ResultsDashboard({ results, onReset }) {
                     <p className="text-white/50 text-sm mt-1">{candidate.filename}</p>
                   </div>
 
-                  <div className="text-right">
-                    <div className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                      {candidate.overall_score.toFixed(1)}
+                  <div className="flex items-start gap-4">
+                    <div className="text-right" onClick={() => setExpandedCard(expandedCard === index ? null : index)}>
+                      <div className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+                        {candidate.overall_score.toFixed(1)}
+                      </div>
+                      <div className="text-white/60 text-sm">Overall Score</div>
                     </div>
-                    <div className="text-white/60 text-sm">Overall Score</div>
+
+                    {/* Delete Button */}
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      onClick={() => deleteCandidate(candidate.resume_id)}
+                      disabled={deletingId === candidate.resume_id}
+                      className="p-2 rounded-lg bg-red-500/20 text-red-400 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/30 disabled:opacity-50"
+                      title="Delete this resume"
+                    >
+                      {deletingId === candidate.resume_id ? (
+                        <div className="w-5 h-5 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <X className="w-5 h-5" />
+                      )}
+                    </motion.button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" onClick={() => setExpandedCard(expandedCard === index ? null : index)}>
                   {[
                     { label: 'Skills', score: candidate.skills_score, color: 'from-blue-500 to-cyan-500' },
                     { label: 'Experience', score: candidate.experience_score, color: 'from-purple-500 to-pink-500' },
@@ -312,7 +380,10 @@ export default function ResultsDashboard({ results, onReset }) {
                   ))}
                 </div>
 
-                <button className="w-full flex items-center justify-center gap-2 text-white/60 hover:text-white transition-colors">
+                <button 
+                  onClick={() => setExpandedCard(expandedCard === index ? null : index)}
+                  className="w-full flex items-center justify-center gap-2 text-white/60 hover:text-white transition-colors"
+                >
                   {expandedCard === index ? (
                     <>
                       <span>Show Less</span>
@@ -408,7 +479,70 @@ export default function ResultsDashboard({ results, onReset }) {
             </motion.div>
           ))}
         </AnimatePresence>
+
+        {candidates.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center py-20"
+          >
+            <Trophy className="w-16 h-16 text-white/20 mx-auto mb-4" />
+            <h3 className="text-2xl font-bold text-white mb-2">No candidates found</h3>
+            <p className="text-white/60">All resumes have been deleted</p>
+            <button
+              onClick={onReset}
+              className="mt-6 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold"
+            >
+              Upload New Resumes
+            </button>
+          </motion.div>
+        )}
       </div>
+
+      {/* Clear All Confirmation Modal */}
+      <AnimatePresence>
+        {showClearModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xl"
+            onClick={() => setShowClearModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-8 max-w-md w-full mx-4"
+            >
+              <div className="text-center">
+                <div className="inline-flex p-4 rounded-full bg-red-500/20 mb-4">
+                  <Trash2 className="w-8 h-8 text-red-400" />
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-3">Clear All Data?</h3>
+                <p className="text-white/70 mb-6">
+                  This will permanently delete all {candidates.length} resume{candidates.length !== 1 ? 's' : ''} and their analysis results. This action cannot be undone.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowClearModal(false)}
+                    className="flex-1 px-6 py-3 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={clearAllData}
+                    className="flex-1 px-6 py-3 rounded-xl bg-gradient-to-r from-red-500 to-rose-500 text-white font-semibold shadow-lg hover:shadow-red-500/50 transition-all"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

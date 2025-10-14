@@ -1,97 +1,130 @@
 import google.generativeai as genai
-import os
 import json
 import re
+import os
 from dotenv import load_dotenv
 
-load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+def extract_and_match_raw_text(resume_text, job_description):
+    load_dotenv()
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-def match_resume_with_job(resume_data, job_description):
-    """Use Gemini to match resume with job description and provide detailed scoring"""
-    
-    prompt = f"""You are an expert HR recruiter. Analyze this candidate's resume against the job description and provide detailed scoring.
+    prompt = f"""
+    You are an expert technical recruiter and talent evaluator. 
+    Your task is to analyze a candidate's resume and evaluate how well they match a given job description. 
+    Focus on the quality of alignment between the candidate's **skills, experience, and education** with the **requirements and responsibilities** in the job description.
 
-CANDIDATE RESUME:
-Name: {resume_data.get('name', 'N/A')}
-Email: {resume_data.get('email', 'N/A')}
-Skills: {', '.join(resume_data.get('skills', [])) if resume_data.get('skills') else 'N/A'}
-Experience: {resume_data.get('experience', 'N/A')}
-Education: {resume_data.get('education', 'N/A')}
+    ---
 
-JOB DESCRIPTION:
-{job_description}
+    ### INPUTS
 
-Provide a detailed analysis in the following JSON format:
-{{
-  "overall_score": 8.5,
-  "skills_score": 9.0,
-  "experience_score": 8.0,
-  "education_score": 8.5,
-  "strengths": ["strength 1", "strength 2", "strength 3"],
-  "gaps": ["gap 1", "gap 2"],
-  "justification": "A detailed 3-4 sentence explanation of why this candidate is a good/poor fit, mentioning specific skills and experiences that align with the job requirements.",
-  "recommendation": "Highly Recommended / Recommended / Maybe / Not Recommended"
-}}
+    **Resume (raw text):**
+    {resume_text}
 
-Scoring Guidelines:
-- overall_score: 0-10 (overall fit for the role)
-- skills_score: 0-10 (technical skills match)
-- experience_score: 0-10 (relevant work experience)
-- education_score: 0-10 (educational background fit)
+    **Job Description:**
+    {job_description}
 
-Return ONLY valid JSON, no markdown formatting."""
+    ---
+
+    ### TASK INSTRUCTIONS
+
+    1. **Understand both documents deeply:**
+    - Extract and normalize candidate information (skills, experience, education, and contact details).
+    - Interpret the job description's key skills, responsibilities, and preferred experience.
+    - Evaluate *semantic* rather than just keyword similarity (e.g., “TensorFlow” ≈ “Machine Learning Frameworks”).
+
+    2. **Scoring and Analysis:**
+    - Assign scores (0-10) for the following:
+        - `skills_score`: Alignment of technical and soft skills.
+        - `experience_score`: Relevance and depth of professional experience.
+        - `education_score`: Fit of academic background.
+        - `overall_score`: Overall candidate-job fit considering all factors.
+    - Provide concise reasoning behind the scores.
+
+    3. **Output requirements:**
+    - Return only valid JSON.
+    - Be objective, consistent, and concise.
+    - Do not include markdown, text outside JSON, or explanations beyond the JSON structure.
+
+    ---
+
+    ### JSON OUTPUT FORMAT
+
+    Return your final structured analysis as **strictly valid JSON** with this exact format:
+
+    {{
+    "name": "Candidate full name or 'Not Found'",
+    "email": "email@example.com or 'Not Found'",
+    "phone": "phone number or 'Not Found'",
+    "skills": ["skill1", "skill2", "skill3"],
+    "summary": "One-sentence professional summary of the candidate.",
+    "overall_score": 8.3,
+    "skills_score": 8.5,
+    "experience_score": 8.0,
+    "education_score": 7.5,
+    "strengths": ["Strong data analysis skills", "Relevant Python experience", "Good communication"],
+    "gaps": ["Limited leadership experience", "No direct cloud deployment experience"],
+    "justification": "Summarize in 3-5 sentences why the candidate received this score and how they align with the job requirements.",
+    "recommendation": "Highly Recommended / Recommended / Maybe / Not Recommended"
+    }}
+
+    ---
+
+    ### SCORING GUIDELINES
+
+    - **9-10:** Exceptional match — exceeds all major requirements.
+    - **7-8:** Strong match — meets most requirements well.
+    - **5-6:** Moderate match — some gaps but potentially trainable.
+    - **3-4:** Weak match — lacks key qualifications.
+    - **0-2:** Poor match — unrelated or missing essential experience.
+
+    ---
+
+    ### OUTPUT RULES
+
+    - Output **only** the JSON structure — no markdown, code blocks, or commentary.
+    - Be deterministic and consistent — if unsure, infer logically based on available information.
+    - Ensure numbers are floats (e.g., 8.0 not "eight").
+    - Use plain text values, no special characters or formatting.
+
+    Begin your analysis now.
+    """
+
 
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         response = model.generate_content(prompt)
-        
         result_text = response.text.strip()
-        
-        # Remove markdown code blocks
         if result_text.startswith("```"):
             result_text = re.sub(r'```json\n?|\n?```', '', result_text).strip()
-        
-        analysis = json.loads(result_text)
-        
-        # Ensure all required fields exist
+        data = json.loads(result_text)
+
         return {
-            "overall_score": analysis.get("overall_score", 5.0),
-            "skills_score": analysis.get("skills_score", 5.0),
-            "experience_score": analysis.get("experience_score", 5.0),
-            "education_score": analysis.get("education_score", 5.0),
-            "strengths": analysis.get("strengths", []),
-            "gaps": analysis.get("gaps", []),
-            "justification": analysis.get("justification", "Analysis not available"),
-            "recommendation": analysis.get("recommendation", "Needs Review")
+            "name": data.get("name", "Not Found"),
+            "email": data.get("email", "Not Found"),
+            "phone": data.get("phone", "Not Found"),
+            "skills": data.get("skills", []),
+            "overall_score": data.get("overall_score", 5.0),
+            "skills_score": data.get("skills_score", 5.0),
+            "experience_score": data.get("experience_score", 5.0),
+            "education_score": data.get("education_score", 5.0),
+            "strengths": data.get("strengths", []),
+            "gaps": data.get("gaps", []),
+            "justification": data.get("justification", "Analysis not available"),
+            "recommendation": data.get("recommendation", "Needs Review")
         }
-        
     except Exception as e:
-        print(f"Matching error: {str(e)}")
-        # Return default scoring if LLM fails
+        print(f"LLM Error: {str(e)}")
         return {
-            "overall_score": 5.0,
-            "skills_score": 5.0,
-            "experience_score": 5.0,
-            "education_score": 5.0,
-            "strengths": ["Unable to analyze"],
-            "gaps": ["Unable to analyze"],
-            "justification": f"Error during analysis: {str(e)}",
+            "name": "Error",
+            "email": "Error",
+            "phone": "Error",
+            "skills": [],
+            "overall_score": 0.0,
+            "skills_score": 0.0,
+            "experience_score": 0.0,
+            "education_score": 0.0,
+            "strengths": ["Error analyzing resume"],
+            "gaps": ["Error analyzing resume"],
+            "justification": f"Error: {str(e)}",
             "recommendation": "Needs Manual Review"
         }
-
-def batch_match_resumes(resumes_data, job_description):
-    """Match multiple resumes against a job description"""
-    results = []
-    
-    for resume_data in resumes_data:
-        match_result = match_resume_with_job(resume_data, job_description)
-        results.append({
-            "resume": resume_data,
-            "match": match_result
-        })
-    
-    # Sort by overall score descending
-    results.sort(key=lambda x: x["match"]["overall_score"], reverse=True)
-    
-    return results
