@@ -64,9 +64,9 @@ function FloatingDocuments() {
           <meshStandardMaterial
             color="#ffffff"
             transparent
-            opacity={0.1}
+            opacity={0.15}
             emissive="#667eea"
-            emissiveIntensity={0.2}
+            emissiveIntensity={0.3}
           />
         </mesh>
       ))}
@@ -76,8 +76,13 @@ function FloatingDocuments() {
 
 export default function AnimatedBackground() {
   return (
-    <div className="fixed inset-0 -z-10">
-      <Canvas camera={{ position: [0, 0, 5], fov: 75 }}>
+    <div className="fixed inset-0 -z-10" style={{ width: '100vw', height: '100vh' }}>
+      <Canvas 
+        camera={{ position: [0, 0, 5], fov: 75 }}
+        gl={{ alpha: true, antialias: true }}
+        dpr={[1, 2]}
+      >
+        <color attach="background" args={['#000000']} />
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} intensity={1} />
         <FloatingParticles />
